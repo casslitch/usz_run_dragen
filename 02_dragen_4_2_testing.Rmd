@@ -1,0 +1,49 @@
+```{r}
+library(dplyr)
+set.seed(123)
+
+metadata <- read.csv("/project/results/wgs_vs_fmi/metadata_wgs_vs_fmi.csv")
+QC <- read.csv("/project/results/QC/melanoma_wgs_purity_ploidy.csv")
+metadata <- metadata %>%
+  left_join(QC %>% select(purity,WGS))
+metadata <- metadata %>%
+  arrange(purity)
+
+samples_keep1 <- c("LG2019_22","LG2021_154","LG2020_12") # BRAF MNV case, CNV wrong cases
+samples_keep2 <- metadata$WGS[!metadata$WGS %in% samples_keep1]
+samples_keep2 <- samples_keep2[sample.int(length(samples_keep2),17)] # Random remaining samples with mixed purity
+samples_keep <- c(samples_keep1,samples_keep2)
+
+metadata <- metadata %>%
+  select(WGS, WGS_normal,purity) %>%
+  filter(WGS %in% samples_keep)
+metadata$Status <- "Pending"
+metadata <- metadata %>%
+  select(-purity)
+colnames(metadata) <- c("Tumor","Normal","Status")
+
+write.table(metadata, "/wgs/sampleSheet_dragen42_testing.csv", quote = F, row.names = F,
+            sep = "\t")
+
+```
+
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python3 runDragenSomaticWGS_v4_2_4.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/dragen42_testing/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/sampleSheet_dragen42_testing.csv \
+--bclFolder /mnt/novaseq_runs/ &> /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/dragen42_testing/dragen_${timestamp}.log &
+```
+
+Rerun the BRAF MNV case (LG2019_22) with additional settings (see illumina email).
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+bash /mnt/MTP_WGS_Share/melanoma_TP/scripts/dragen/LG2019_22_custom_settings.sh &> /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/dragen42_testing/dragen_${timestamp}.log &
+```
+

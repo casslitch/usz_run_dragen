@@ -1,0 +1,252 @@
+These samples were aligned to an older genome and should be reproessed
+
+Create sample sheet.
+
+```{r}
+library(dplyr)
+library(RJSONIO)
+
+metadata <- read.csv("/project/results/metadata_clean.csv")
+metadata <- metadata %>%
+  filter(!EXCLUDED)
+metadata <- metadata %>%
+  filter(SOMATIC_FILE_FOUND) # process the samples we know ran correctly the first time
+metadata <- metadata %>%
+  select(WGS, WGS_normal)
+metadata$Status <- "Pending"
+colnames(metadata) <- c("Tumor","Normal","Status")
+
+# Get ids of the samples on the correct genome
+files <- list.files("/wgs/tumor_normal/", pattern = "replay.json", recursive = T, full.names = T)
+files <- files[!grepl("rerunFebMar2023",files)]
+
+replay <- lapply(files, RJSONIO::fromJSON)
+replay <- lapply(replay, '[[', "hash_table_build")
+replay <- lapply(replay, '[[', 3)
+keep <- grepl("hg38_alt_masked_graph_v2", unlist(replay))
+ids <- gsub("-replay.json","",basename(files))
+
+metadata <- metadata %>%
+  filter(!Tumor %in% ids[keep])
+
+write.table(metadata, "/wgs/sampleSheet_reprocess.csv", quote = F, row.names = F,
+            sep = "\t")
+```
+
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python runDragenSomaticWGS_v3_9_5.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/sampleSheet_reprocess.csv \
+--bclFolder /mnt/novaseq_runs/ &> /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/dragen_${timestamp}.log &
+```
+
+Repeat the failed ones
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python runDragenSomaticWGS_v3_9_5.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/sampleSheet_reprocess2.csv \
+--bclFolder /mnt/novaseq_runs/ &> /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/dragen_${timestamp}.log &
+```
+
+Run samples where the normal is on the old genome (even if tumour is on the new one).
+
+```{r}
+library(dplyr)
+library(RJSONIO)
+
+metadata <- read.csv("/project/results/metadata_clean.csv")
+metadata <- metadata %>%
+  filter(!EXCLUDED)
+metadata <- metadata %>%
+  filter(SOMATIC_FILE_FOUND) # process the samples we know ran correctly the first time
+# Remove the ones we've already rerun
+rerun1 <- read.csv("/wgs/sampleSheet_reprocess.csv", sep = "\t")
+rm <- rerun1$Tumor
+metadata <- metadata %>%
+  filter(!WGS %in% rm)
+
+metadata <- metadata %>%
+  select(WGS, WGS_normal)
+metadata$Status <- "Pending"
+colnames(metadata) <- c("Tumor","Normal","Status")
+
+
+# Get ids of the normal samples on the correct genome
+files <- list.files("/wgs/normal/", pattern = "replay.json", recursive = T, full.names = T)
+
+replay <- lapply(files, RJSONIO::fromJSON)
+replay <- lapply(replay, '[[', "hash_table_build")
+replay <- lapply(replay, '[[', 3)
+keep <- grepl("hg38_alt_masked_graph_v2", unlist(replay))
+ids <- gsub("-replay.json","",basename(files))
+
+metadata <- metadata %>%
+  filter(!Normal %in% ids[keep])
+
+write.table(metadata, "/wgs/sampleSheet_reprocess3.csv", quote = F, row.names = F,
+            sep = "\t")
+```
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python runDragenSomaticWGS_v3_9_5.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/sampleSheet_reprocess3.csv \
+--bclFolder /mnt/novaseq_runs/ &> /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/dragen_${timestamp}.log &
+```
+
+Run the samples which failed due to reference files not being mounted
+```{r}
+rerun1 <- read.csv("/wgs/sampleSheet_reprocess.csv", sep = "\t")
+failed <- read.csv("/wgs/reprocess_failed_samps.txt", header = F)
+ids <- failed$V1[grepl("LG",failed$V1)]
+
+rerun1 <- rerun1 %>%
+  select(Tumor, Normal,Status)
+rerun1 <- rerun1 %>%
+  filter(Tumor %in% ids | Status == "Ignore") %>%
+  filter(Normal != "LG2022_41") # no fastqs found
+rerun1$Status <- "Pending"
+
+write.table(rerun1, "/wgs/sampleSheet_reprocess4.csv", quote = F, row.names = F,
+            sep = "\t")
+```
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python runDragenSomaticWGS_v3_9_5.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/sampleSheet_reprocess4.csv \
+--bclFolder /mnt/novaseq_runs/ &> /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/dragen_${timestamp}.log &
+```
+
+Rerun the remaining failed ones.
+
+```{r}
+ids <- c("LG2022_03","LG2022_06","LG2022_07","LG2022_08")
+
+metadata <- read.csv("/project/results/metadata_clean.csv")
+metadata <- metadata %>%
+  select(WGS, WGS_normal)
+metadata$Status <- "Pending"
+colnames(metadata) <- c("Tumor","Normal","Status")
+
+metadata <- metadata %>%
+  filter(Normal %in% ids | Tumor == "LG2020_35")
+write.table(metadata, "/wgs/sampleSheet_reprocess5.csv", quote = F, row.names = F,
+            sep = "\t")
+```
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python runDragenSomaticWGS_v3_9_5.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/sampleSheet_reprocess5.csv \
+--bclFolder /mnt/novaseq_runs/ &> /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/dragen_${timestamp}.log &
+```
+
+
+Rerun the remaining 22 samples.
+```{r}
+metadata <- read.csv("/project/results/metadata_clean.csv")
+metadata <- metadata %>%
+  filter(!EXCLUDED)
+metadata <- metadata %>%
+  filter(SOMATIC_FILE_FOUND) # process the samples we know ran correctly the first time
+metadata <- metadata %>%
+  select(WGS, WGS_normal)
+metadata$Status <- "Pending"
+colnames(metadata) <- c("Tumor","Normal","Status")
+
+all_ran <- list.files("/wgs/",pattern = "sampleSheet_reprocess", full.names = T)
+all_ran_list <- lapply(all_ran, read.csv, sep = "\t")
+all_ran_df <- bind_rows(all_ran_list)
+
+metadata <- metadata %>%
+  filter(!Tumor %in% all_ran_df$Tumor)
+
+#get the ids of the samples we haven't run yet
+ids <- read.csv("/wgs/rerunSep2023/fastq_domingo/tumor_ids.txt", header = F)
+ids <- ids$V1
+ids[!ids %in% metadata$Tumor] # LG2021_45 was excluded as it was a sample swap (see metadata Rmd) and LG2019_20 is only in Domingo's processing sheet on the first tab of the metadata google doc so I don't think it's in our cohort
+
+write.table(metadata, "/wgs/sampleSheet_reprocess6.csv", quote = F, row.names = F,
+            sep = "\t")
+```
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python runDragenSomaticWGS_v3_9_5.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/sampleSheet_reprocess6.csv \
+--bclFolder /mnt/novaseq_runs/ &> /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/dragen_${timestamp}.log &
+```
+
+Get the samples that have never been run and do a dryrun to check if fastqs exist
+```{r}
+library(dplyr)
+samples <- read.csv("/project/results/QC/sample_update_231020.csv")
+samples <- samples %>%
+  filter(rerunSep23 == FALSE & WGS_normal != "" & runPre23 == FALSE)
+
+samps_df <- data.frame("Tumor" = samples$WGS, "Normal" = samples$WGS_normal)
+samps_df$status <- "Pending"
+
+write.table(samps_df, "/wgs/sampleSheet_neverRun.csv", quote = F, row.names = F,
+            sep = "\t")
+```
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python runDragenSomaticWGS_v3_9_5.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/tmp/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/sampleSheet_neverRun.csv \
+--bclFolder /mnt/novaseq_runs/ --dryRun
+```
+
+Process the remaining samples which we manually resolved.
+
+```{r}
+samples <- read.csv("/project/data/samples_remaining_241023.csv")
+samples$Status <- "Pending"
+
+write.table(samples, "/wgs/sampleSheet_remaining_241023.csv", quote = F, row.names = F,
+            sep = "\t")
+```
+
+Note: For LG2021_52 manually removed the first run (note from Dagmar that this sample was rerun). Just perform the analyses based on the second run. -> Still crashed. 
+Added LG2019_20 manually (see Bettina email).
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python runDragenSomaticWGS_v3_9_5.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/sampleSheet_remaining_241023.csv \
+--bclFolder /mnt/novaseq_runs/ &> /mnt/MTP_WGS_Share/wgs_sobottka_melanoma/rerunSep2023/dragen_${timestamp}.log &
+```
+
+
