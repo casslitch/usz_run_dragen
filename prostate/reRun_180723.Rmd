@@ -1,0 +1,28 @@
+# Create the sample sheet
+These samples were resequenced due to low tumour content. 
+Rerun with the original normal samples. 
+
+```{r}
+library(dplyr)
+metadata <- read.csv("/project/results/exploratory_plots/snsf_grant/metadata_clean.csv")
+metadata <- metadata %>%
+  filter(low_tumour | LG.Tumor == "LG2022.162" | LG.Tumor == "LG2022.178") %>%
+  filter(LG.Tumor != "LG2022.146")
+metadata <- metadata %>%
+  select(LG.Tumor, LG.matched.normal)
+metadata$Status <- "Pending"
+colnames(metadata) <- c("Tumor","Normal","Status")
+write.table(metadata, "/wgs/rerun_180723/sampleSheet.csv", quote = F, row.names = F, 
+            sep = "\t")
+```
+
+```{python}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python runDragenSomaticWGS_v3_9_5.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_prostate/rerun_180723/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_prostate/rerun_180723/sampleSheet.csv \
+--bclFolder /mnt/novaseq_runs/ \
+--runIDsTumor 230707_A00854_0465_AHNMVHDSX2,230629_A00854_0462_BHNMTCDSX2 \
+--normalOutDir /mnt/MTP_WGS_Share/wgs_sobottka_prostate/normal/ &> /mnt/MTP_WGS_Share/wgs_sobottka_prostate/rerun_180723/rerun.log &
+```
+

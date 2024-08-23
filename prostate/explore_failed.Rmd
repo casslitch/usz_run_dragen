@@ -1,0 +1,234 @@
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(readxl)
+
+outdir <- "/project/results/misc/insert_size_plots/"
+```
+
+# Get run ids of failed samples
+
+```{r}
+fastq_fns <- list.files("/wgs/june24/failed_bams/", pattern = "*fastq*",full.names = T)
+fastq_list <- lapply(fastq_fns,read.csv)
+fastq_df <- bind_rows(fastq_list)
+fastq_df <- fastq_df %>%
+  mutate(runs = basename(dirname(fastq_df$Read1File)))
+
+```
+
+# Iseq
+## RESEQ027 - RESEQ31 
+
+
+```{r}
+coverage_fn <- list.files("/project/data/sequencing_metadata/", pattern = "^RESEQ.*", full.names = T)
+coverage_list <- lapply(coverage_fn,read_xlsx)
+names(coverage_list) <- gsub("_TotalCov.xlsx","",basename(coverage_fn))
+  
+coverage_df <- bind_rows(coverage_list, .id = "run")
+coverage_df <- coverage_df %>%
+  mutate(sampleID = gsub("_1_1_1","",SampleID)) 
+
+coverage_df <- coverage_df %>%
+  rowwise() %>%
+  mutate(target_cov = case_when(run == "RESEQ027" & is.na(target_cov) & as.numeric(strsplit(sampleID,"_")[[1]][2]) %% 2 == 0 ~ 60,
+      run == "RESEQ027" & is.na(target_cov) ~ 30,
+      TRUE ~ target_cov)) %>%
+  mutate(diff =  TotalCov - target_cov)
+
+coverage_df <- coverage_df %>%
+  mutate(failed = diff < -1*target_cov*0.2) %>%
+  mutate(failed_run1 = FastqCoverage_Run1 < target_cov*0.3 &
+           FastqCoverage_Run1 != 0) %>%
+  mutate(target2 = target_cov - FastqCoverage_Run1) %>%
+  mutate(failed_run2 = FastqCoverage_Run2 < target2*0.3 &
+           FastqCoverage_Run2 != 0)
+
+
+sample_sheet <- read_xlsx("/project/data/sequencing_metadata/20240313_Soban_WGS_Prostata-Proben_PRCA.xlsx", skip = 14, sheet = 2)
+sample_sheet <- sample_sheet[!is.na(sample_sheet$`Sample ID`),]
+sample_sheet <- sample_sheet %>%
+  mutate(sample_type = case_when(`Tissue type (e.g. blood, organ)\r\nalso note if control sample` %in% c("matched healthy prostate control","matched normal",                                      "normal") ~ "Normal",
+               `Tissue type (e.g. blood, organ)\r\nalso note if control sample` %in% c("prostate","prostate cancer") ~ "Tumor",
+         TRUE ~ "Benign")) %>%
+  mutate(sampleID = gsub("\\.","_",`MTP Lab ID\r\n(tb completed by MTP lab)`)) %>%
+  rename(material=`Material sent for analysis (FF/FFPE/Blood)`)
+```
+
+Iseq insert size
+```{r}
+insert_sizes_fn <- list.files("/project/data/sequencing_metadata/InsertSize/", pattern = ".txt",full.names = T)
+insert_sizes <- lapply(insert_sizes_fn,read.delim, skip = 10)
+names(insert_sizes) <-  gsub("-1-1-1.insert_size_metricx.txt","",basename(insert_sizes_fn))
+insert_sizes_df <- bind_rows(insert_sizes,.id="sampleID")
+insert_sizes_df <- insert_sizes_df %>%
+  mutate(sampleID = gsub("-","_",sampleID))
+insert_sizes_df <- insert_sizes_df  %>%
+  filter(sampleID %in% coverage_df$sampleID)   %>% 
+  left_join(coverage_df %>% select(sampleID,failed,failed_run1,failed_run2,run))  %>%
+  left_join(sample_sheet %>% select(sampleID,sample_type,material)) %>%
+  mutate(material = ifelse(run == "RESEQ027","FFPE",material))
+
+
+insert_sizes_df <- insert_sizes_df %>%
+  group_by(sampleID) %>%
+  mutate(pc = All_Reads.fr_count/sum(All_Reads.fr_count))
+```
+
+```{r}
+ggplot(insert_sizes_df, aes(x = as.numeric(insert_size), y = as.numeric(pc), color = failed,
+                        group = sampleID)) +
+  geom_smooth(se = F) +
+    theme_minimal() +
+    xlab("Insert size (bp)") + ylab("Frequency") +
+  xlim(c(20,750)) + ylim(c(0,0.01)) +
+  scale_color_manual(values = c("black","red")) +
+  facet_grid(~material) +
+  geom_vline(xintercept = 140,linetype = "dashed")
+ggsave(paste0(outdir,"/insert_sizes_by_fail_status.pdf"), width = 12, height = 8)
+
+```
+
+```{r}
+combine_peak_values1 <- read.delim("/project/data/sequencing_metadata/combined_peak_values.txt")
+combine_peak_values2 <- read.delim("/project/data/sequencing_metadata/combined_peak_values_018_027.txt")
+combine_peak_values <- bind_rows(combine_peak_values1,
+                                 combine_peak_values2)
+
+combine_peak_values <- combine_peak_values %>%
+  mutate(prefix = gsub("-1-1-1","",prefix)) %>%
+  mutate(prefix = gsub("-","_",prefix)) %>%
+  rename(sampleID = prefix) %>%
+  filter(sampleID %in% coverage_df$sampleID)   %>% 
+  left_join(coverage_df %>% select(sampleID,failed,failed_run1,failed_run2,run))  %>%
+  left_join(sample_sheet %>% select(sampleID,sample_type,material)) %>%
+  mutate(material = ifelse(run == "RESEQ027","FFPE",material))
+
+ggplot(combine_peak_values,
+       aes(x = peak_insertsize, y = share, color = failed,
+           shape = failed_run1)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("black","red")) +
+  facet_grid(~material) +
+  geom_vline(xintercept = 140,linetype = "dashed")
+ggsave(paste0(outdir,"/dot_plot_by_material_RE27_RE31.pdf"), width = 12, height = 8)
+
+
+ggplot(combine_peak_values,
+       aes(x = peak_insertsize, y = share, color = failed,
+           shape = material)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("black","red")) +
+  facet_wrap(~ run) +
+  geom_vline(xintercept = 140,linetype = "dashed")
+ggsave(paste0(outdir,"/dot_plot_by_material_and_run_RE27_RE31.pdf"), width = 12, height = 8)
+
+
+```
+
+# Novaseq
+# Insert sizes
+```{r}
+frag_len_fn <- list.files("/wgs/june24/", pattern = ".fragment_length_hist.csv", recursive = T, full.names = T)
+frag_len <- lapply(frag_len_fn, read.csv, skip = 1)
+names(frag_len) <- gsub(".fragment_length_hist.csv","",basename(frag_len_fn))
+
+frag_length <- bind_rows(frag_len, .id = "sampleID")
+iseq_frag_length <- insert_sizes_df %>%
+  filter(sampleID %in% unique(frag_length$sampleID))
+iseq_frag_length$source <- "Iseq"
+frag_length$source <- "Novaseq"
+iseq_frag_length <- iseq_frag_length %>%
+  rename(FragmentLength = insert_size) %>%
+  rename(Count = All_Reads.fr_count)
+
+tmp <- bind_rows(frag_length, iseq_frag_length)
+
+pass <- unique(data.frame(iseq_frag_length[iseq_frag_length$failed != TRUE,"sampleID"]))$sampleID
+fail <-  unique(data.frame(iseq_frag_length[iseq_frag_length$failed == TRUE,"sampleID"]))$sampleID
+
+
+tmp <- tmp %>%
+  group_by(sampleID, source) %>%
+  mutate(pc = Count/sum(Count))
+```
+
+```{r}
+for(i in pass){
+  tmp %>%
+    filter(sampleID == i ) %>%
+  ggplot(aes(x = as.numeric(FragmentLength), y = as.numeric(pc), color = source)) +
+    geom_smooth(stat = "identity") +
+    xlim(c(0,1000)) +
+    theme_minimal() +
+    xlab("Insert size (bp)") + ylab("Frequency") +
+    scale_color_manual(values = c("black","red"))
+  ggsave(paste0(outdir,"/dragen_vs_iseq/pass/",i,".pdf"), width = 6, height = 4)
+}
+
+for(i in fail){
+  tmp %>%
+    filter(sampleID == i ) %>%
+  ggplot(aes(x = as.numeric(FragmentLength), y = as.numeric(pc), color = source)) +
+    geom_smooth(stat = "identity") +
+    xlim(c(0,1000)) +
+    theme_minimal() +
+    xlab("Insert size (bp)") + ylab("Frequency") +
+    scale_color_manual(values = c("black","red"))
+  ggsave(paste0(outdir,"/dragen_vs_iseq/fail/",i,".pdf"), width = 6, height = 4)
+}
+```
+
+
+```{r}
+# Add samples run with same program as i-seq to check if the shift is a programatic thing
+fns <- list.files("/project/data/sequencing_metadata/","LG.*", full.names = T)
+sample_ids <- gsub("_tumor.insert_size_metrics.txt","",basename(fns))
+wgs_insert_sizes <- lapply(fns,read.delim, skip = 10)
+names(wgs_insert_sizes) <- sample_ids
+wgs_insert_sizes_df <- bind_rows(wgs_insert_sizes, .id = "sampleID")
+wgs_insert_sizes_df$source <- "WGS_GATK"
+
+wgs_insert_sizes_df <- wgs_insert_sizes_df %>%
+  rename(FragmentLength = insert_size) %>%
+  rename(Count = All_Reads.fr_count)
+
+# Add Iseq DRAGMAP
+# Add samples run with same program as i-seq to check if the shift is a programatic thing
+fns <- list.files("/project/data/sequencing_metadata/Iseq_DRAGMAP/","LG.*", full.names = T)
+sample_ids <- gsub("_tumor.ISEQ.insert_size_metrics.txt","",basename(fns))
+iseq_insert_sizes <- lapply(fns,read.delim, skip = 10)
+names(iseq_insert_sizes) <- sample_ids
+iseq_insert_sizes_df <- bind_rows(iseq_insert_sizes, .id = "sampleID")
+iseq_insert_sizes_df$source <- "Iseq_DRAGMAP"
+
+iseq_insert_sizes_df <- iseq_insert_sizes_df %>%
+  rename(FragmentLength = insert_size) %>%
+  rename(Count = All_Reads.fr_count)
+
+
+tmp <- bind_rows(frag_length, iseq_frag_length, wgs_insert_sizes_df,iseq_insert_sizes_df)
+tmp <- tmp %>%
+  filter(sampleID %in% sample_ids)
+
+
+tmp <- tmp %>%
+  group_by(sampleID, source) %>%
+  mutate(pc = Count/sum(Count))
+
+
+for(i in sample_ids){
+  tmp %>%
+    filter(sampleID == i ) %>%
+  ggplot(aes(x = as.numeric(FragmentLength), y = as.numeric(pc), color = source)) +
+    geom_smooth(stat = "identity") +
+    xlim(c(0,1000)) +
+    theme_minimal() +
+    xlab("Insert size (bp)") + ylab("Frequency") +
+    scale_color_manual(values = c("black","purple","red","blue"))
+  ggsave(paste0(outdir,"/dragen_vs_iseq/gatk/",i,".pdf"), width = 6, height = 4)
+}
+```
+

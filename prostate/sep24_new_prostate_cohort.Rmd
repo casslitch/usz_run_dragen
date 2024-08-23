@@ -1,0 +1,118 @@
+```{r}
+library(dplyr)
+library(readxl)
+library(tidyr)
+```
+
+# Initial alignment for QC
+
+```{r}
+coverage_df <- read_xlsx("/project/data/RESEQ033_TotalCov_Run1.xlsx")
+coverage_df <- coverage_df %>%
+  mutate(sampleID = gsub("_1_._1","",SampleID))
+
+tumor_samples <- coverage_df %>%
+  filter(!sampleID %in% failed_df$sampleID) %>%
+  filter(`No/Tu` == "Tumor") %>%
+  select(sampleID)
+write.table(tumor_samples,"/wgs/wgs_sobottka_prostate/2024_cohort/QC/tumor_normal/sample_sheet_for_alignment_sep24.csv",row.names=F, quote=F, col.names = F)
+```
+
+```{bash}
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/projects/cassie/dragen/scripts/driver_scripts
+python3  runDragenAlign_v4_2.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/dragen_results/wgs_sobottka_prostate/2024_cohort/QC/tumor_normal/ \
+--sampleSheet /mnt/MTP_WGS_Share/dragen_results/wgs_sobottka_prostate/2024_cohort/QC/tumor_normal/sample_sheet_for_alignment_sep24.csv \
+--bclFolder /mnt/novaseq_runs/ --globSequencer '2408*_A0*' &> /mnt/MTP_WGS_Share/dragen_results/wgs_sobottka_prostate/2024_cohort/QC/tumor_normal/dragen_${timestamp}.log &
+```
+
+# Full analyses
+```{r}
+coverage_fn <- list.files("/project/data/", pattern = "^RESEQ.*", full.names = T)
+coverage_list <- lapply(coverage_fn,read_xlsx, col_types = "text")
+names(coverage_list) <- gsub("_TotalCov.*","",basename(coverage_fn))
+#coverage_list <- lapply(coverage_list,setNames, colnames(coverage_list[[1]])) # old format
+
+coverage_df <- bind_rows(coverage_list, .id = "run")
+coverage_df <- coverage_df %>%
+  mutate(sampleID = gsub("_1_._1","",SampleID))
+
+dup_ids <-  coverage_df$sampleID[duplicated(coverage_df$sampleID)]
+coverage_df %>%
+  filter(sampleID %in% dup_ids) %>%
+  arrange(sampleID,run) %>%
+  View()
+
+# Add missing coverage for this run
+coverage_df <- coverage_df %>%
+   mutate(target_cov = case_when(run == "RESEQ027" & is.na(target_cov) & as.numeric(strsplit(sampleID,"_")[[1]][2]) %% 2 == 0 ~ "60",
+      run == "RESEQ027" & is.na(target_cov) ~ "30",
+      TRUE ~ target_cov))
+  
+coverage_df_summary <- coverage_df %>%
+  mutate(T_COV = ifelse(is.na(TargetCov), target_cov,TargetCov)) %>%
+  group_by(sampleID, T_COV) %>%
+  summarize(total = sum(as.numeric(TotalCov),as.numeric(FastqCoverage),na.rm=T),
+            runs  = paste(run,collapse = ",")) %>%
+  mutate(diff = total - as.numeric(T_COV)) %>%
+  mutate(failed = diff < -1*as.numeric(T_COV)*0.2) 
+```
+
+```{r}
+sample_sheet <- read_xlsx("/project/data/20240313_Soban_WGS_Prostata-Proben_PRCA.xlsx",
+                          skip = 14, sheet = 2)
+colnames(sample_sheet)[6] <- "sampleID"
+  
+sample_sheet <- sample_sheet %>%
+  filter(!is.na(No.)) %>%
+  mutate(sampleID = gsub("\\.","_",sampleID)) %>%
+  filter(!is.na(`Sequencing successful (Y/N)`) | sampleID %in% coverage_df$sampleID) 
+
+resequenced <- sample_sheet[sample_sheet$sampleID %in% c("LG2022_184","LG2022_77"),]
+benign <- sample_sheet[sample_sheet$sampleID %in% c("LG2024_149","LG2024_150",
+                                                    "LG2024_151"),]
+tumor_normal <- sample_sheet[!(sample_sheet$sampleID %in% resequenced$sampleID |
+                               sample_sheet$sampleID %in% benign$sampleID),]
+
+coverage_df_summary <- coverage_df_summary[coverage_df_summary$sampleID %in% sample_sheet$sampleID,]
+
+tumor_normal <- tumor_normal %>%
+  left_join(coverage_df_summary)
+
+# Assign pairs
+normal <- tumor_normal[seq(1,nrow(tumor_normal)-1,by=2),]
+tumor <- tumor_normal[seq(2,nrow(tumor_normal),by=2),]
+
+run_sample_sheet <- data.frame(Tumor = tumor$sampleID, Normal = normal$sampleID,
+                           Tumor_failed = tumor$failed, Normal_failed = normal$failed)
+
+run_sample_sheet <- run_sample_sheet %>%
+  mutate(Failed = Tumor_failed | Normal_failed)
+
+write.csv(run_sample_sheet, "/project/results/tumor_normal_RESEQ27_to_RESEQ34.csv",
+          row.names=F)
+
+not_sequenced <- sample_sheet %>%
+  filter(`Sequencing successful (Y/N)` == "N")
+
+run1 <- run_sample_sheet %>%
+  filter(Failed != TRUE)
+run1 <- run1 %>% 
+  dplyr::select(-Failed, -Tumor_failed, -Normal_failed) %>%
+  mutate(Status = "Pending")
+
+write.table(run1, "/wgs/wgs_sobottka_prostate/2024_cohort/sampleSheet_230824.csv", quote = F, row.names = F,
+            sep = "\t")
+```
+
+```{bash}
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/projects/cassie/dragen/scripts/driver_scripts
+python3 runDragenSomaticWGS_v4_2_4.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/dragen_results/wgs_sobottka_prostate/2024_cohort/ \
+--matchFile /mnt/MTP_WGS_Share/dragen_results/wgs_sobottka_prostate/2024_cohort/sampleSheet_230824.csv \
+--bclFolder /mnt/novaseq_runs/ --globSequencer '24*_A*' &>  /mnt/MTP_WGS_Share/dragen_results/wgs_sobottka_prostate/2024_cohort/dragen_${timestamp}.log &
+```

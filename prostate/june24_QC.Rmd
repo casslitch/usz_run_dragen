@@ -1,0 +1,69 @@
+```{r}
+library(dplyr)
+library(readxl)
+library(tidyr)
+```
+
+```{r}
+coverage_df <- read_xlsx("/project/data/sequencing_metadata/SummaryCov_RESEQ028-031.xlsx")
+coverage_df <- coverage_df %>%
+  mutate(sampleID = gsub("_1_1_1","",SampleID))
+
+sample_sheet <- read_xlsx("/project/data/sequencing_metadata/20240313_Soban_WGS_Prostata-Proben_PRCA.xlsx", skip = 14, sheet = 2)
+sample_sheet <- sample_sheet[!is.na(sample_sheet$`Sample ID`),]
+sample_sheet <- sample_sheet %>%
+  mutate(sample_type = case_when(`Tissue type (e.g. blood, organ)\r\nalso note if control sample` %in% c("matched healthy prostate control","matched normal",                                      "normal") ~ "Normal",
+               `Tissue type (e.g. blood, organ)\r\nalso note if control sample` %in% c("prostate","prostate cancer") ~ "Tumor",
+         TRUE ~ "Benign")) %>%
+  mutate(LG_Code = gsub("\\.","_",`MTP Lab ID\r\n(tb completed by MTP lab)`))
+
+sample_tab <- sample_sheet %>%
+  select(`Sample ID`, 
+         sample_type,LG_Code) %>%
+  pivot_wider(id_cols = c(`Sample ID`), names_from = sample_type,
+              values_from = LG_Code) 
+
+current_run <- sample_tab %>%
+  filter(Tumor %in% coverage_df$sampleID |
+          Normal %in% coverage_df$sampleID )
+
+tumor_samples <- current_run %>%
+  select(Tumor) %>%
+  filter(!is.na(Tumor))
+
+failed <- coverage_df$sampleID[coverage_df$diff < 0]
+failed_df <- sample_sheet %>%
+  filter(LG_Code %in% failed) 
+failed_df <- failed_df %>%
+  select(LG_Code)
+write.table(failed_df,"/wgs/2024_cohort/failed_bams/sample_sheet_june24.csv",row.names=F, quote=F, col.names = F)
+
+tumor_samples <- tumor_samples %>%
+  filter(!Tumor %in% failed_df$LG_Code)
+write.table(tumor_samples,"/wgs/2024_cohort/QC/tumor_normal/sample_sheet_for_alignment_june24.csv",row.names=F, quote=F, col.names = F)
+
+```
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python3  runDragenAlign_v4_2.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_prostate/2024_cohort/failed_bams/ \
+--sampleSheet /mnt/MTP_WGS_Share/wgs_sobottka_prostate/2024_cohort/failed_bams/sample_sheet.csv \
+--bclFolder /mnt/novaseq_runs/ --globSequencer '24*_A0*' &> /mnt/MTP_WGS_Share/wgs_sobottka_prostate/2024_cohort/failed_bams/dragen_${timestamp}.log &
+```
+
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python3  runDragenAlign_v4_2.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_prostate/2024_cohort/QC/tumor_normal/ \
+--sampleSheet /mnt/MTP_WGS_Share/wgs_sobottka_prostate/2024_cohort/QC/tumor_normal/sample_sheet_for_alignment_june24.csv \
+--bclFolder /mnt/novaseq_runs/ --globSequencer '24*_A0*' &> /mnt/MTP_WGS_Share/wgs_sobottka_prostate/2024_cohort/QC/tumor_normal/dragen_${timestamp}.log &
+```
+

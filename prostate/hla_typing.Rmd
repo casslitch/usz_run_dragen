@@ -1,0 +1,55 @@
+Create sample sheet.
+
+```{r}
+library(dplyr)
+
+metadata <- read.csv("/project/results/exploratory_plots/snsf_grant/metadata_clean.csv")
+metadata <- metadata %>%
+  select(sampleID, normalID)
+metadata$Status <- "Pending"
+colnames(metadata) <- c("Tumor","Normal","Status")
+
+# Start with the remaped pilot samples
+ids1 <- list.files("/wgs/tumor_normal/rerunFebMar2023/remap_pilot_230710/")
+write.table(metadata[metadata$Tumor %in% ids1,], "/wgs/final_data/sampleSheet1.csv", quote = F, row.names = F,
+            sep = "\t")
+
+# Then the resequenced
+ids2 <- list.files("/wgs/rerun_180723/tumor_normal/")
+write.table(metadata[metadata$Tumor %in% ids2,], "/wgs/final_data/sampleSheet2.csv", quote = F, row.names = F,
+            sep = "\t")
+
+# Then the remaining
+write.table(metadata[!(metadata$Tumor %in% ids2 | metadata$Tumor %in% ids1),], "/wgs/final_data/sampleSheet3.csv", quote = F, row.names = F,
+            sep = "\t")
+```
+
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python runDragenHLA_v3_9_5.py \
+--normalOutDir /mnt/MTP_WGS_Share/wgs_sobottka_prostate/normal/remap_pilot_230710/ \
+--tumorOutDir /mnt/MTP_WGS_Share/wgs_sobottka_prostate/tumor_normal/rerunFebMar2023/remap_pilot_230710/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_prostate/final_data/sampleSheet1.csv &> /mnt/MTP_WGS_Share/wgs_sobottka_prostate/final_data/dragen_logs/dragen_hla_$RANDOM.log &
+```
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+python runDragenHLA_v3_9_5.py \
+--normalOutDir /mnt/MTP_WGS_Share/wgs_sobottka_prostate/normal/ \
+--tumorOutDir /mnt/MTP_WGS_Share/wgs_sobottka_prostate/rerun_180723/tumor_normal/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_prostate/final_data/sampleSheet2.csv &> /mnt/MTP_WGS_Share/wgs_sobottka_prostate/final_data/dragen_logs/dragen_hla_${timestamp}.log &
+```
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+python runDragenHLA_v3_9_5.py \
+--normalOutDir /mnt/MTP_WGS_Share/wgs_sobottka_prostate/normal/ \
+--tumorOutDir /mnt/MTP_WGS_Share/wgs_sobottka_prostate/tumor_normal/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_prostate/final_data/sampleSheet3.csv &> /mnt/MTP_WGS_Share/wgs_sobottka_prostate/final_data/dragen_logs/dragen_hla_${timestamp}.log &
+```
+

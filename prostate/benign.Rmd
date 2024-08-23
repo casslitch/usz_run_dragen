@@ -1,0 +1,39 @@
+Create the sample table
+```{r}
+library(dplyr)
+library(openxlsx)
+
+metadata <- read.xlsx("/project/data/20230303_Prostatesamples_biobank_Fabius.xlsx")
+
+# Fix padding
+metadata$LG.Tumor <- gsub("^LG21\\.","LG2021.",metadata$LG.Tumor)
+metadata$LG.matched.normal <- gsub("^LG21\\.","LG2021.",metadata$LG.matched.normal)
+
+metadata <- metadata %>%
+  mutate(sampleID = gsub("\\.","_",LG.Tumor)) %>%
+  mutate(normalID = gsub("\\.","_",LG.matched.normal))
+metadata <- metadata %>%
+  filter(is.na(LG.Tumor))  # keep benign
+# Remove this sample which was never run the first time
+metadata <- metadata %>%
+  filter(normalID != "LG2022_80")
+
+sample_df <- data.frame("Tumor" = metadata$normalID, "Normal" = metadata$normalID) # use the normal id twice
+sample_df$Status <- "Pending"
+
+write.table(sample_df, "/wgs/benign/sampleSheet.csv", quote = F, row.names = F, 
+            sep = "\t")
+```
+
+```{python}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+timestamp=$(date -I)
+
+python runDragenSomaticWGS_v3_9_5.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/wgs_sobottka_prostate/benign/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_prostate/benign/sampleSheet.csv \
+--bclFolder /mnt/novaseq_runs/ \
+--germlineOnly &> /mnt/MTP_WGS_Share/wgs_sobottka_prostate/benign/dragen_${timestamp}.log &
+```
+
+

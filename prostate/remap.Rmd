@@ -1,0 +1,31 @@
+# Pilot
+The pilot samples were mapped to an older genome (Homo_sapiens_assembly38.fasta)
+They need to be reanalysed with new genome (Hg38_alt_masked_graph_v2)
+
+Michael processed these samples. However 3 of them failed and need to be reprocessed.
+-LG2021.131
+-LG2021.126
+
+This one is no longer in the study so we will leave it
+-LG2021.129
+
+```{r}
+library(dplyr)
+metadata <- read.csv("/project/results/exploratory_plots/snsf_grant/metadata_clean.csv")
+metadata <- metadata %>%
+  filter(LG.Tumor == "LG2021.131" | LG.Tumor == "LG2021.126") #LG2021.131
+metadata <- metadata %>%
+  select(LG.Tumor, LG.matched.normal)
+metadata$Status <- "Pending"
+colnames(metadata) <- c("Tumor","Normal","Status")
+write.table(metadata, "/wgs/tumor_normal/rerunFebMar2023/remap_pilot_230710/sampleSheet.csv", quote = F, row.names = F, 
+            sep = "\t")
+```
+
+```{bash}
+cd /mnt/MTP_WGS_Share/binf_untils/DRAGEN
+python runDragenSomaticWGS_v3_9_5.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFastq/ \
+--outDir /mnt/MTP_WGS_Share/tmp/ \
+--matchFile /mnt/MTP_WGS_Share/wgs_sobottka_prostate/tumor_normal/rerunFebMar2023/remap_pilot_230710/sampleSheet.csv \
+--bclFolder /mnt/novaseq_runs/ &> /mnt/MTP_WGS_Share/wgs_sobottka_prostate/tumor_normal/rerunFebMar2023/remap_pilot_230710/dragen_$RANDOM.log &
+```
