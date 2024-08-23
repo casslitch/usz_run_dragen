@@ -28,12 +28,11 @@ python3  runDragenAlign_v4_2.py --inputDir /mnt/WGS/dragen_workdir/1-untrimmedFa
 --bclFolder /mnt/novaseq_runs/ --globSequencer '2408*_A0*' &> /mnt/MTP_WGS_Share/dragen_results/wgs_sobottka_prostate/2024_cohort/QC/tumor_normal/dragen_${timestamp}.log &
 ```
 
-# Full analyses
+# Full cohort analyses
 ```{r}
-coverage_fn <- list.files("/project/data/", pattern = "^RESEQ.*", full.names = T)
+coverage_fn <- list.files("/project/data/", pattern = "^RESEQ[27|28|29|30|31]", full.names = T) # Prostate cohort runs RESEQ027-RESEQ031
 coverage_list <- lapply(coverage_fn,read_xlsx, col_types = "text")
 names(coverage_list) <- gsub("_TotalCov.*","",basename(coverage_fn))
-#coverage_list <- lapply(coverage_list,setNames, colnames(coverage_list[[1]])) # old format
 
 coverage_df <- bind_rows(coverage_list, .id = "run")
 coverage_df <- coverage_df %>%
@@ -45,7 +44,7 @@ coverage_df %>%
   arrange(sampleID,run) %>%
   View()
 
-# Add missing coverage for this run
+# Add missing target coverage for this run
 coverage_df <- coverage_df %>%
    mutate(target_cov = case_when(run == "RESEQ027" & is.na(target_cov) & as.numeric(strsplit(sampleID,"_")[[1]][2]) %% 2 == 0 ~ "60",
       run == "RESEQ027" & is.na(target_cov) ~ "30",
@@ -57,18 +56,20 @@ coverage_df_summary <- coverage_df %>%
   summarize(total = sum(as.numeric(TotalCov),as.numeric(FastqCoverage),na.rm=T),
             runs  = paste(run,collapse = ",")) %>%
   mutate(diff = total - as.numeric(T_COV)) %>%
-  mutate(failed = diff < -1*as.numeric(T_COV)*0.2) 
+  mutate(failed = diff < -1*as.numeric(T_COV)*0.2)
+write.csv(coverage_df_summary,"/project/results/coverage_summary_RESEQ027_to_RESEQ033.csv",row.names=F)
 ```
 
 ```{r}
+coverage_df_summary <- read.csv("/project/results/coverage_summary_RESEQ027_to_RESEQ033.csv")
 sample_sheet <- read_xlsx("/project/data/20240313_Soban_WGS_Prostata-Proben_PRCA.xlsx",
-                          skip = 14, sheet = 2)
+                          skip = 14, sheet = 2) # Order sheet for the prostate samples
 colnames(sample_sheet)[6] <- "sampleID"
   
 sample_sheet <- sample_sheet %>%
-  filter(!is.na(No.)) %>%
+  filter(!is.na(No.)) %>% # these samples were ordered/sequenced in 2022
   mutate(sampleID = gsub("\\.","_",sampleID)) %>%
-  filter(!is.na(`Sequencing successful (Y/N)`) | sampleID %in% coverage_df$sampleID) 
+  filter(!is.na(`Sequencing successful (Y/N)`) | sampleID %in% coverage_df_summary$sampleID) 
 
 resequenced <- sample_sheet[sample_sheet$sampleID %in% c("LG2022_184","LG2022_77"),]
 benign <- sample_sheet[sample_sheet$sampleID %in% c("LG2024_149","LG2024_150",
@@ -90,12 +91,6 @@ run_sample_sheet <- data.frame(Tumor = tumor$sampleID, Normal = normal$sampleID,
 
 run_sample_sheet <- run_sample_sheet %>%
   mutate(Failed = Tumor_failed | Normal_failed)
-
-write.csv(run_sample_sheet, "/project/results/tumor_normal_RESEQ27_to_RESEQ34.csv",
-          row.names=F)
-
-not_sequenced <- sample_sheet %>%
-  filter(`Sequencing successful (Y/N)` == "N")
 
 run1 <- run_sample_sheet %>%
   filter(Failed != TRUE)
