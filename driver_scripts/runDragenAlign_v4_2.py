@@ -22,7 +22,7 @@ def params():
                         help = 'Glob pattern to search for the sequencer run folders')
     parser.add_argument('-o','--outDir',
                         required = True,
-                        help = 'Path to output folder')
+                        help = 'Path to output folder'),
     args = parser.parse_args()
     return args
 
